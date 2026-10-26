@@ -1,0 +1,77 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pg-backup
+  namespace: voting-app
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app: pg-backup
+        spec:
+          serviceAccountName: pg-backup
+          restartPolicy: Never
+          volumes:
+            - name: backup
+              emptyDir: {}
+          initContainers:
+            - name: dump
+              image: postgres:15-alpine
+              command: ["/bin/sh", "-c"]
+              args:
+                - set -e; pg_dump -h postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /backup/dump.sql; gzip /backup/dump.sql; ls -l /backup
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_PASSWORD
+                - name: POSTGRES_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_USER
+                - name: POSTGRES_DB
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_DB
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
+          containers:
+            - name: upload
+              image: amazon/aws-cli:latest
+              command: ["/bin/sh", "-c"]
+              args:
+                - set -e; aws s3 cp /backup/dump.sql.gz "s3://${BUCKET}/postgres/$(date -u +%Y-%m-%dT%H-%M-%SZ).sql.gz"
+              env:
+                - name: BUCKET
+                  valueFrom:
+                    configMapKeyRef:
+                      name: pgbackup-config
+                      key: BUCKET
+                - name: AWS_REGION
+                  value: us-east-1
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi

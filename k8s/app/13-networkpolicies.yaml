@@ -40,6 +40,9 @@ spec:
         - podSelector:
             matchLabels:
               app: result
+        - podSelector:
+            matchLabels:
+              app: pg-backup
       ports:
         - protocol: TCP
           port: 5432
